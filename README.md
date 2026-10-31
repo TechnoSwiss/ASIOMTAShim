@@ -4,7 +4,10 @@ An ASIO pass-through driver that fixes **vMix hanging on shutdown** when using a
 
 The shim registers as its own ASIO device, loads the real TASCAM driver behind it, and passes every call through unchanged, except that it moves vMix's buffer callbacks off the TASCAM driver's thread. No extra buffering is added, so latency is unaffected.
 
-> **Status:** in testing. Please report results (good or bad) via Issues.
+> **Status:** working (v1.1.0). Tested with vMix 64-bit and a US-16x08 at 48 kHz / 128 samples (TASCAM software 4.00 0064, firmware 2.10 0024): multiple shim inputs work, and vMix shuts down normally.
+
+> [!IMPORTANT]
+> In vMix, **everything** that uses the US-16x08 (inputs *and* outputs, including the master, headphones, and bus outputs) must use **US-16x08 (MTA Shim)**. vMix treats the shim and the original driver as two separate devices. If anything still uses "US-16x08 ASIO Driver", that instance holds the hardware, and the shim fails to start with `Could not start ASIO device US-16x08 (MTA Shim), BASS_ERROR_UNKNOWN`.
 
 ---
 
@@ -95,9 +98,9 @@ The installer:
 
 ## Using with vMix
 
-1. Restart vMix.
-2. Replace the existing TASCAM ASIO input with **US-16x08 (MTA Shim)**.
-3. Redo the channel mapping, since vMix tracks the device by name.
+1. Close vMix, then start it again.
+2. In **Settings → Audio Output**, make sure no output (master, headphones, buses) is set to "US-16x08 ASIO Driver". Use another device, or **US-16x08 (MTA Shim)** if you want audio out of the TASCAM.
+3. Replace every existing TASCAM ASIO input with **US-16x08 (MTA Shim)**, and redo the channel mapping, since vMix tracks the device by name.
 4. Check the audio for clicks or dropouts, then test a shutdown.
 
 ## Uninstalling
@@ -115,10 +118,34 @@ $c='{6F1D2C84-3A57-4E9B-B0C2-9D41E7A5F318}'; $dll='C:\AsioShim\AsioMtaShim64.dll
 To remove a manual registration:
 
 ```powershell
-Remove-Item 'HKLM:\SOFTWARE\ASIO\US-16x08 (MTA Shim)','HKLM:\SOFTWARE\Classes\CLSID\{6F1D2C84-3A57-4E9B-B0C2-9D41E7A5F318}','HKLM:\SOFTWARE\AsioMtaShim' -Recurse -Force
+Remove-Item 'HKLM:\SOFTWARE\ASIO\US-16x08 (MTA Shim)','HKLM:\SOFTWARE\Classes\CLSID\{6F1D2C84-3A57-4E9B-B0C2-9D41E7A5F318}','HKLM:\SOFTWARE\AsioMtaShim','C:\ProgramData\AsioMtaShim' -Recurse -Force -EA 0
 ```
 
 ## Troubleshooting
+
+**`BASS_ERROR_UNKNOWN` when adding a shim input.** Something in vMix is still using the original "US-16x08 ASIO Driver", usually an audio output. See the note at the top. To check, start vMix with no inputs and run:
+
+```powershell
+(Get-Process vMix64).Modules | Where-Object { $_.ModuleName -match 'us_asio|AsioMtaShim' } | Format-List ModuleName, FileName
+```
+
+If `us_asio.dll` is listed before you've added any shim input, a vMix setting is using the original driver.
+
+**Logging.** The shim can log every ASIO call (arguments, return codes, the driver's error text, and which thread and COM apartment each call arrives on) to `C:\ProgramData\AsioMtaShim\shim.log`. It's off by default. To turn it on (elevated PowerShell, then restart vMix):
+
+```powershell
+New-ItemProperty HKLM:\SOFTWARE\AsioMtaShim -Name EnableLog -PropertyType DWord -Value 1 -Force | Out-Null
+```
+
+Set the value to `0` to turn it off again. The log folder is removed on uninstall.
+
+**Troubleshooting switches.** These are REG_DWORD values under `HKLM\SOFTWARE\AsioMtaShim`, read each time vMix opens the device. All default to `0`, which is the working configuration.
+
+| Value | Effect when set to 1 |
+|---|---|
+| `Passthrough` | Gives the driver vMix's own callbacks, with no worker thread. The shim becomes a pure proxy, so this does **not** fix the hang; it's useful for checking whether a problem is caused by the callback handoff. |
+| `FreshLoad` | The shim loads the driver DLL itself (`LoadLibrary`) and unloads it when released, so every open gets a freshly loaded driver. |
+| `OwnerThread` | Runs every control call (`init`, `createBuffers`, `start`, ...) on the thread that created the driver, for drivers that care which thread calls them. |
 
 **vMix still hangs on shutdown.** Capture a dump while it's hung (Task Manager → Details → right-click `vMix64.exe` → *Create memory dump file*), open it in WinDbg, and run:
 
@@ -129,7 +156,7 @@ Remove-Item 'HKLM:\SOFTWARE\ASIO\US-16x08 (MTA Shim)','HKLM:\SOFTWARE\Classes\CL
 ~*e !clrstack
 ```
 
-If a `FinalReleaseComObject` is still being marshaled into an STA context, the object is being created somewhere other than the buffer callback. Please open an issue with the output.
+If a `FinalReleaseComObject` is still being marshaled into an STA context, the object is being created somewhere other than the buffer callback. Please open an issue with the output and a `shim.log`.
 
 **Emergency shutdown without the shim.** Saving the preset through the vMix API and then killing the process avoids the hang:
 
@@ -140,6 +167,11 @@ Invoke-RestMethod "http://127.0.0.1:8088/api/?Function=SavePreset&Value=C:\vMix\
 ## Other interfaces
 
 Nothing in the shim is specific to TASCAM. Another ASIO driver with the same behavior could be wrapped by pointing `HKLM\SOFTWARE\AsioMtaShim\TargetCLSID` at that driver's CLSID (listed under `HKLM\SOFTWARE\ASIO`). The installer currently looks only for the US-16x08.
+
+## Version history
+
+- **1.1.0**: First working release. Logging is opt-in (`EnableLog`); `Passthrough`, `FreshLoad`, and `OwnerThread` troubleshooting switches; owner-thread marshaling available but off by default; the installer removes the log folder on uninstall.
+- **1.0.x**: Development builds with diagnostic logging.
 
 ## Disclaimer
 

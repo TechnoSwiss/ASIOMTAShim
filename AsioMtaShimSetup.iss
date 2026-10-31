@@ -12,7 +12,7 @@
 [Setup]
 AppId={{B3E7A2D1-5C84-4F6A-9E21-7D0C38F4A9B6}
 AppName=ASIO MTA Shim for TASCAM US-16x08
-AppVersion=1.0.0
+AppVersion=1.1.0
 UninstallDisplayName=ASIO MTA Shim for TASCAM US-16x08
 DefaultDirName={autopf}\AsioMtaShim
 DisableDirPage=yes
@@ -32,6 +32,10 @@ WizardStyle=modern
 Source: "AsioMtaShim64.dll"; DestDir: "{app}"; Flags: ignoreversion restartreplace uninsrestartdelete
 Source: "AsioMtaShim.cpp";   DestDir: "{app}"; Flags: ignoreversion
 
+[UninstallDelete]
+; Diagnostic log folder (only exists if EnableLog was turned on)
+Type: filesandordirs; Name: "{commonappdata}\AsioMtaShim"
+
 [Registry]
 ; COM registration for the shim
 Root: HKLM64; Subkey: "SOFTWARE\Classes\CLSID\{{{#ShimClsid}}"; ValueType: string; ValueName: ""; ValueData: "ASIO MTA Shim"; Flags: uninsdeletekey
@@ -42,7 +46,8 @@ Root: HKLM64; Subkey: "SOFTWARE\Classes\CLSID\{{{#ShimClsid}}\InprocServer32"; V
 Root: HKLM64; Subkey: "SOFTWARE\ASIO\{#AsioName}"; ValueType: string; ValueName: "CLSID"; ValueData: "{{{#ShimClsid}}"; Flags: uninsdeletekey
 Root: HKLM64; Subkey: "SOFTWARE\ASIO\{#AsioName}"; ValueType: string; ValueName: "Description"; ValueData: "{#AsioName}"
 
-; Which real driver the shim loads (detected at install time)
+; Which real driver the shim loads (detected at install time). The key also
+; holds the optional EnableLog / troubleshooting switches and is removed on uninstall.
 Root: HKLM64; Subkey: "SOFTWARE\AsioMtaShim"; ValueType: string; ValueName: "TargetCLSID"; ValueData: "{code:GetTargetClsid}"; Flags: uninsdeletekey
 
 [Code]
